@@ -1,104 +1,77 @@
-﻿
+﻿using System.Globalization;
+
 internal static class Program
 {
     private static void Main(string[] args)
     {
+        var targetMonth = YearMonth.Parse(args.Length > 0 ? args[0] : null);
+        var walletsPath = args.Length > 1 ? args[1] : "wallets.csv";
+        var txPath = args.Length > 2 ? args[2] : "transactions.csv";
 
-    }
-}
-
-[Serializable]
-public sealed class Wallet
-{
-    public string ID { get; }
-    public string Name { get; }
-    public string Currency { get; }
-    public decimal InitialBalance { get; }
-    public decimal Balance { get; private set; }
-
-    private readonly List<Transaction> _transactions;
-
-    public Wallet(string id, string name, string currency, IEnumerable<Transaction> transactions)
-    {
-        ID = id;
-        Name = name;
-        Currency = currency ?? "RUB";
-
-        _transactions = transactions?.ToList() ?? new List<Transaction>();
-        RecalculateBalance();
-    }
-
-    public bool MakeTransaction(Transaction transaction)
-    {
-        var isExpense = transaction.Type == TransactionType.Expense;
-
-        if (isExpense && transaction.Value > Balance)
+        if (!File.Exists(walletsPath))
         {
-            return false;
+            Console.Error.WriteLine($"File not found: {walletsPath}");
+            return;
+        }
+        if (!File.Exists(txPath))
+        {
+            Console.Error.WriteLine($"File not found: {txPath}");
+            return;
         }
 
-        _transactions.Add(transaction);
+        var wallets = CsvConfigLoader.LoadWallets(walletsPath).ToDictionary(w => w.ID, w => w);
+        var allTx = CsvConfigLoader.LoadTransactions(txPath).ToList();
 
-        Balance += isExpense ? -transaction.Value : transaction.Value;
-        return true;
-    }
+        var rejected = new List<(Wallet Wallet, Transaction Tx, string Reason)>();
+        foreach (var group in allTx.GroupBy(t => t.WalletID))
+        {
+            if (!wallets.TryGetValue(group.Key, out var wallet))
+            {
+                foreach (var tx in group)
+                    rejected.Add((new Wallet(group.Key, "<unknown>", "RUB", 0m), tx.Tx, "Unknown wallet"));
+                continue;
+            }
 
-    public void RecalculateBalance()
-    {
-        var sum = _transactions.Sum(t => t.Type == TransactionType.Expense ? -t.Value : t.Value);
-        Balance = InitialBalance + sum;
-    }
+            foreach (var tx in group.OrderBy(t => t.Tx.DateTime))
+            {
+                var ok = wallet.MakeTransaction(tx.Tx);
+                if (!ok)
+                    rejected.Add((wallet, tx.Tx, "Insufficient funds"));
+            }
+        }
 
-    public IReadOnlyList<Transaction> GetTransactionsForMonth(DateTime date)
-    {
-        return _transactions
-            .Where(t => t.DateTime.Year == date.Year && t.DateTime.Month == date.Month)
-            .OrderBy(t => t.DateTime)
-            .ToList();
-    }
-
-    public (decimal Income, decimal Expense) GetMonthIncomeExpense(DateTime date)
-    {
-        var monthTx = GetTransactionsForMonth(date);
-        var income = monthTx.Where(t => t.Type == TransactionType.Income).Sum(t => t.Value);
-        var expense = monthTx.Where(t => t.Type == TransactionType.Expense).Sum(t => t.Value);
-        return (income, expense);
-    }
-
-    public List<Transaction> GetTopExpenses(DateTime date, int topN)
-    {
-        return _transactions
-            .Where(t => t.Type == TransactionType.Expense && t.DateTime.Year == date.Year && t.DateTime.Month == date.Month)
-            .OrderByDescending(t => t.Value)
-            .ThenBy(t => t.DateTime)
-            .Take(topN)
-            .ToList();
+        ReportPrinter.PrintHeader(targetMonth);
+        ReportPrinter.PrintPerWalletGroupedByType(targetMonth, wallets.Values);
+        ReportPrinter.PrintTopExpensesPerWallet(targetMonth, wallets.Values, 3);
+        ReportPrinter.PrintRejected(rejected);
     }
 }
 
-
-public enum TransactionType
+public readonly struct YearMonth
 {
-    Income,
-    Expense
-}
+    public int Year { get; }
+    public int Month { get; }
 
-[Serializable]
-public struct Transaction
-{
-
-    public string ID { get; private set; }
-    public DateTime DateTime { get; private set; }
-    public decimal Value { get; private set; }
-    public TransactionType Type { get; private set; }
-    public string Description { get; private set; }
-
-    public Transaction(string iD, DateTime dateTime, decimal value, TransactionType type, string description)
+    public YearMonth(int year, int month)
     {
-        ID = iD;
-        DateTime = dateTime;
-        Value = value;
-        Type = type;
-        Description = description;
+        Year = year;
+        Month = month;
     }
+
+    public static YearMonth Parse(string? arg)
+    {
+        if (string.IsNullOrWhiteSpace(arg))
+        {
+            var now = DateTime.Today;
+            return new YearMonth(now.Year, now.Month);
+        }
+        arg = arg.Trim();
+        if (DateTime.TryParseExact(arg, new[] { "yyyy-MM", "yyyy/MM", "MM.yyyy" }, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
+            return new YearMonth(dt.Year, dt.Month);
+        if (DateTime.TryParse(arg, out dt))
+            return new YearMonth(dt.Year, dt.Month);
+        throw new FormatException($"Invalid target month format: {arg}");
+    }
+
+    public override string ToString() => $"{Year:D4}-{Month:D2}";
 }

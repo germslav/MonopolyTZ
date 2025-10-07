@@ -1,0 +1,6 @@
+WalletID,TransactionID,Date,Value,Type,Description
+w1,t1,2025-09-01,5000,Income,Salary advance
+w1,t2,2025-09-02,700,Expense,Groceries
+w1,t3,2025-09-10,2000,Expense,Rent part
+w2,t4,2025-09-05,50,Income,Transfer
+w2,t5,2025-09-12,120,Expense,Gadgets

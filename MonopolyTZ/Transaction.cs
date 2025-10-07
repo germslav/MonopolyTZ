@@ -1,4 +1,7 @@
-﻿[Serializable]
+﻿using System.Runtime.CompilerServices;
+[assembly: InternalsVisibleTo("Tests")]
+
+[Serializable]
 public readonly struct Transaction
 {
     public string ID { get; }
